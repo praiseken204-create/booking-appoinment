@@ -1,0 +1,395 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ================= USERS & ROLES =================
+
+enum Role {
+  CUSTOMER
+  PROVIDER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+model User {
+  id           String       @id @default(cuid())
+  name         String
+  email        String       @unique
+  phone        String?
+  passwordHash String?
+  image        String?
+  role         Role         @default(CUSTOMER)
+  status       UserStatus   @default(ACTIVE)
+  emailVerified DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  providerProfile ProviderProfile?
+  accounts        Account[]
+  sessions        Session[]
+  appointments    Appointment[]  @relation("CustomerAppointments")
+  reviews         Review[]
+  payments        Payment[]      @relation("CustomerPayments")
+  notifications   Notification[]
+  preferences     NotificationPreference?
+}
+
+// ================= NEXT-AUTH =================
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ================= PROVIDER PROFILE =================
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model ProviderProfile {
+  id          String             @id @default(cuid())
+  userId      String             @unique
+  businessName String
+  bio         String?
+  category    String
+  location    String?
+  address     String?
+  timezone    String             @default("Africa/Lagos")
+  profileImage String?
+  rating      Float              @default(0)
+  reviewCount Int                @default(0)
+  isVerified  Boolean            @default(false)
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+  isActive    Boolean            @default(true)
+  isSuspended Boolean            @default(false)
+  contactEmail String?
+  contactPhone String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services    Service[]
+  availability Availability[]
+  blockedTimes BlockedTime[]
+  appointments Appointment[]     @relation("ProviderAppointments")
+  reviews     Review[]
+  payments    Payment[]          @relation("ProviderPayments")
+  policies    CancellationPolicy?
+  earnings    ProviderEarning[]
+}
+
+// ================= SERVICES =================
+
+enum PaymentRequirement {
+  NO_PAYMENT
+  FULL_PAYMENT
+  DEPOSIT
+  PAY_LATER
+}
+
+model Service {
+  id              String            @id @default(cuid())
+  providerId      String
+  name            String
+  description     String?
+  category        String?
+  durationMinutes Int
+  price           Float
+  currency        String            @default("NGN")
+  depositAmount   Float             @default(0)
+  paymentRequirement PaymentRequirement @default(NO_PAYMENT)
+  bufferBefore    Int               @default(0)
+  bufferAfter     Int               @default(0)
+  isActive        Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  provider      ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+}
+
+// ================= AVAILABILITY =================
+
+model Availability {
+  id         String @id @default(cuid())
+  providerId String
+  dayOfWeek  Int
+  startTime  String
+  endTime    String
+  isActive   Boolean @default(true)
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, dayOfWeek])
+}
+
+// ================= BLOCKED TIMES =================
+
+model BlockedTime {
+  id           String   @id @default(cuid())
+  providerId   String
+  startDateTime DateTime
+  endDateTime   DateTime
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([providerId, startDateTime])
+}
+
+// ================= CANCELLATION POLICY =================
+
+model CancellationPolicy {
+  id             String   @id @default(cuid())
+  providerId     String   @unique
+  freeCancelHours Int     @default(24)
+  lateCancelHours Int     @default(24)
+  nonRefundableHours Int  @default(2)
+  lateCancelFee   Float   @default(0)
+  rescheduleAllowed Boolean @default(true)
+  rescheduleHours Int     @default(24)
+  updatedAt      DateTime @updatedAt
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+}
+
+// ================= APPOINTMENTS =================
+
+enum AppointmentStatus {
+  PENDING
+  PAYMENT_PENDING
+  CONFIRMED
+  CHECKED_IN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  RESCHEDULED
+  NO_SHOW
+  EXPIRED
+}
+
+model Appointment {
+  id                String            @id @default(cuid())
+  bookingReference  String            @unique
+  customerId        String
+  providerId        String
+  serviceId         String
+  startTime         DateTime
+  endTime           DateTime
+  originalStartTime DateTime?
+  originalEndTime   DateTime?
+  customerName      String?
+  customerPhone     String?
+  customerNotes     String?
+  status            AppointmentStatus @default(PENDING)
+  requiresApproval  Boolean           @default(false)
+  rescheduleCount   Int               @default(0)
+  cancelledAt       DateTime?
+  cancelReason      String?
+  rescheduleHistory Json?
+  source            String            @default("web")
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  customer      User             @relation("CustomerAppointments", fields: [customerId], references: [id])
+  provider      ProviderProfile  @relation("ProviderAppointments", fields: [providerId], references: [id])
+  service       Service          @relation(fields: [serviceId], references: [id])
+  payments      Payment[]
+  reviews       Review[]
+  history       AppointmentHistory[]
+  notifications Notification[]
+
+  @@index([providerId, startTime])
+  @@index([customerId])
+}
+
+// ================= PAYMENTS =================
+
+enum PaymentType {
+  NO_PAYMENT
+  FULL_PAYMENT
+  DEPOSIT
+  PAY_LATER
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  appointmentId         String
+  customerId            String
+  providerId            String
+  amount                Float
+  currency              String        @default("NGN")
+  paymentProvider       String        @default("mock")
+  transactionReference  String?       @unique
+  providerReference     String?
+  paymentType           PaymentType
+  status                PaymentStatus @default(PENDING)
+  paidAt                DateTime?
+  refundAmount          Float         @default(0)
+  metadata              Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  customer    User       @relation("CustomerPayments", fields: [customerId], references: [id])
+  provider    ProviderProfile @relation("ProviderPayments", fields: [providerId], references: [id])
+}
+
+// ================= REVIEWS =================
+
+model Review {
+  id          String   @id @default(cuid())
+  appointmentId String  @unique
+  customerId  String
+  providerId  String
+  rating      Int
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id])
+  customer    User       @relation(fields: [customerId], references: [id])
+  provider    ProviderProfile @relation(fields: [providerId], references: [id])
+
+  @@index([providerId])
+}
+
+// ================= NOTIFICATIONS =================
+
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  PAYMENT_SUCCESSFUL
+  PAYMENT_FAILED
+  APPOINTMENT_REMINDER
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  BOOKING_UPDATED
+  UPCOMING_REMINDER
+  REVIEW_REQUEST
+  SYSTEM
+}
+
+model Notification {
+  id                  String           @id @default(cuid())
+  userId              String
+  type                NotificationType
+  title               String
+  message             String
+  isRead              Boolean          @default(false)
+  relatedAppointmentId String?
+  createdAt           DateTime         @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [relatedAppointmentId], references: [id], onDelete: SetNull)
+
+  @@index([userId, isRead])
+}
+
+// ================= NOTIFICATION PREFERENCES =================
+
+model NotificationPreference {
+  id             String  @id @default(cuid())
+  userId         String  @unique
+  inApp          Boolean @default(true)
+  email          Boolean @default(true)
+  sms            Boolean @default(false)
+  push           Boolean @default(false)
+  remind24h      Boolean @default(true)
+  remind3h       Boolean @default(true)
+  remind30m      Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ================= APPOINTMENT HISTORY / AUDIT =================
+
+model AppointmentHistory {
+  id            String   @id @default(cuid())
+  appointmentId String
+  previousStatus AppointmentStatus?
+  newStatus     AppointmentStatus?
+  changedBy     String
+  changedByName String?
+  action        String
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  appointment Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([appointmentId])
+}
+
+// ================= PROVIDER EARNINGS =================
+
+enum EarningStatus {
+  PENDING
+  AVAILABLE
+  WITHDRAWN
+}
+
+model ProviderEarning {
+  id          String        @id @default(cuid())
+  providerId  String
+  paymentId   String   @unique
+  appointmentId String?
+  amount      Float
+  status      EarningStatus @default(PENDING)
+  createdAt   DateTime      @default(now())
+
+  provider ProviderProfile @relation(fields: [providerId], references: [id], onDelete: Cascade)
+}
